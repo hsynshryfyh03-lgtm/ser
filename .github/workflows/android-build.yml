@@ -485,37 +485,12 @@ jobs:
 
 
   # ══════════════════════════════════════════════════════════════════════════
-  #  المهمة 2 — بوابة الموافقة اليدوية
-  #  ⏸️  تتوقف هنا حتى تراجع الـ APKs وتضغط Approve
-  #  📌 مطلوب: أنشئ بيئة باسم "release-gate" في Settings → Environments
-  # ══════════════════════════════════════════════════════════════════════════
-  await-approval:
-    name: ⏸️ بانتظار موافقتك على النشر
-    needs: build
-    if: needs.build.result == 'success' && github.event.inputs.create_release != 'false'
-    runs-on: ubuntu-latest
-    environment: release-gate
-
-    steps:
-      - name: ✅ تمت الموافقة — المتابعة للنشر
-        run: |
-          echo "════════════════════════════════════════════════════"
-          echo "  ✅ تمت الموافقة على نشر الإصدار"
-          echo "════════════════════════════════════════════════════"
-          echo "  الإصدار:    ${{ needs.build.outputs.release_tag }}"
-          echo "  نوع المشروع: ${{ needs.build.outputs.project_type }}"
-          echo "  رقم البناء:  #${{ github.run_number }}"
-          echo "  وافق:        ${{ github.actor }}"
-          echo "════════════════════════════════════════════════════"
-
-
-  # ══════════════════════════════════════════════════════════════════════════
-  #  المهمة 3 — إنشاء GitHub Release الرسمي
+  #  المهمة 2 — إنشاء GitHub Release الرسمي
   # ══════════════════════════════════════════════════════════════════════════
   create-release:
     name: 🎉 نشر الإصدار على GitHub
-    needs: [build, await-approval]
-    if: needs.build.result == 'success' && needs.await-approval.result == 'success'
+    needs: [build]
+    if: needs.build.result == 'success' && github.event.inputs.create_release != 'false'
     runs-on: ubuntu-latest
 
     steps:
