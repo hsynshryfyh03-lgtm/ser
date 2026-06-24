@@ -45,8 +45,8 @@ jobs:
       - name: 🔑 Grant execute permission for gradlew
         run: chmod +x gradlew
 
-      - name: 🔨 Build Debug and Release APKs
-        run: ./gradlew assembleDebug assembleRelease --stacktrace --no-daemon -Dorg.gradle.jvmargs="-Xmx4g -XX:+HeapDumpOnOutOfMemoryError"
+      - name: 🔨 Build Debug APK
+        run: ./gradlew assembleDebug --stacktrace --no-daemon -Dorg.gradle.jvmargs="-Xmx4g -XX:+HeapDumpOnOutOfMemoryError"
 
       - name: 🏷️ Generate Release Tag
         id: tag
@@ -55,15 +55,15 @@ jobs:
       - name: 📤 Upload Artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: Android-APKs
-          path: app/build/outputs/apk/**/*.apk
+          name: Android-APK-Debug
+          path: app/build/outputs/apk/debug/*.apk
 
       - name: 🎉 Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ steps.tag.outputs.release_tag }}
           name: "🚀 الإصدار ${{ steps.tag.outputs.release_tag }}"
-          body: "تم بناء هذا الإصدار تلقائياً عبر GitHub Actions 🤖.\n\nتتضمن المرفقات نسخة `debug` للتجربة السريعة، ونسخة `release` للإصدار."
-          files: app/build/outputs/apk/**/*.apk
+          body: "تم بناء هذا الإصدار تلقائياً عبر GitHub Actions 🤖.\n\nتتضمن المرفقات نسخة `debug` الجاهزة للتثبيت مباشرة على هاتفك."
+          files: app/build/outputs/apk/debug/*.apk
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
