@@ -24,6 +24,13 @@ jobs:
           distribution: 'temurin'
           cache: gradle
 
+      - name: 🤖 Setup Android SDK Preview Licenses
+        run: |
+          mkdir -p ~/.android
+          touch ~/.android/repositories.cfg
+          yes | sdkmanager --licenses || true
+          echo "android.allowUntrustedChannel=true" >> gradle.properties
+
       - name: 🔑 Grant execute permission for gradlew
         run: chmod +x gradlew
 
@@ -40,10 +47,10 @@ jobs:
           fi
 
       - name: 🔨 Build Debug APK
-        run: ./gradlew assembleDebug --stacktrace
+        run: ./gradlew assembleDebug --stacktrace --no-daemon
 
       - name: 🚀 Build Release APK
-        run: ./gradlew assembleRelease --stacktrace
+        run: ./gradlew assembleRelease --stacktrace --no-daemon
 
       - name: 🏷️ Generate Release Tag
         id: tag
@@ -62,7 +69,7 @@ jobs:
         with:
           tag_name: ${{ steps.tag.outputs.release_tag }}
           name: "🚀 الإصدار ${{ steps.tag.outputs.release_tag }}"
-          body: "تم بناء هذا الإصدار تلقائياً عبر GitHub Actions 🤖."
+          body: "تم بناء هذا الإصدار تلقائياً عبر GitHub Actions 🤖.\n\nتتضمن المرفقات نسخة `debug` للتجربة السريعة، ونسخة `release` للإصدار."
           files: |
             app/build/outputs/apk/debug/*.apk
             app/build/outputs/apk/release/*.apk
