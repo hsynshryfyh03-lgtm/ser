@@ -1,0 +1,6 @@
+{
+  "name": "مؤقت للدراسة",
+  "description": "تطبيق إنتاجية متطور مصمم لمساعدة الطلاب على التركيز وتنظيم الوقت باستخدام تقنية البومودورو، مدمج بواجهة مستوحاة من جماليات نظام iOS 26 المستقبلي الفاخر.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
