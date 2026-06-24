@@ -2,7 +2,7 @@ name: 🤖 Android Build & Release
 
 on:
   push:
-    branches: [ main, master ]
+    branches: [ "main", "master" ]
   workflow_dispatch:
 
 permissions:
@@ -10,7 +10,6 @@ permissions:
 
 jobs:
   build:
-    name: 🏗️ Build APKs & Create Release
     runs-on: ubuntu-latest
 
     steps:
@@ -24,33 +23,30 @@ jobs:
           distribution: 'temurin'
           cache: gradle
 
-      - name: 🤖 Setup Android SDK Preview Licenses
+      - name: 📝 Setup environment files (.env & debug.keystore)
         run: |
-          mkdir -p ~/.android
-          touch ~/.android/repositories.cfg
-          yes | sdkmanager --licenses || true
+          if [ -f ".env.example" ] && [ ! -f ".env" ]; then
+            cp .env.example .env
+          elif [ ! -f ".env" ]; then
+            touch .env
+          fi
+          
+          if [ ! -f "debug.keystore" ]; then
+            keytool -genkey -v -keystore debug.keystore -storepass android -alias androiddebugkey -keypass android -keyalg RSA -keysize 2048 -validity 10000 -dname "CN=Android Debug,O=Android,C=US"
+          fi
+
+      - name: 🤖 Accept Android SDK Licenses
+        run: |
+          mkdir -p "$ANDROID_HOME/licenses"
+          echo "24333f8a63b6825ea9c5514f83c2829b004d1fee" > "$ANDROID_HOME/licenses/android-sdk-license"
+          echo "84831b9409646a918e30573bab4c9c91346d8abd" > "$ANDROID_HOME/licenses/android-sdk-preview-license"
           echo "android.allowUntrustedChannel=true" >> gradle.properties
 
       - name: 🔑 Grant execute permission for gradlew
         run: chmod +x gradlew
 
-      - name: 📝 Setup environment files (.env & debug.keystore)
-        run: |
-          # إنشاء ملف .env لتجنب أخطاء البناء إذا كان مفقوداً
-          if [ ! -f ".env" ]; then
-            touch .env
-          fi
-          
-          # إنشاء debug.keystore للتوقيع لتجنب فشل البناء على GitHub
-          if [ ! -f "debug.keystore" ]; then
-            keytool -genkey -v -keystore debug.keystore -storepass android -alias androiddebugkey -keypass android -keyalg RSA -keysize 2048 -validity 10000 -dname "CN=Android Debug,O=Android,C=US"
-          fi
-
-      - name: 🔨 Build Debug APK
-        run: ./gradlew assembleDebug --stacktrace --no-daemon
-
-      - name: 🚀 Build Release APK
-        run: ./gradlew assembleRelease --stacktrace --no-daemon
+      - name: 🔨 Build Debug and Release APKs
+        run: ./gradlew assembleDebug assembleRelease --stacktrace --no-daemon -Dorg.gradle.jvmargs="-Xmx4g -XX:+HeapDumpOnOutOfMemoryError"
 
       - name: 🏷️ Generate Release Tag
         id: tag
@@ -59,10 +55,8 @@ jobs:
       - name: 📤 Upload Artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: apks-${{ steps.tag.outputs.release_tag }}
-          path: |
-            app/build/outputs/apk/debug/*.apk
-            app/build/outputs/apk/release/*.apk
+          name: Android-APKs
+          path: app/build/outputs/apk/**/*.apk
 
       - name: 🎉 Create GitHub Release
         uses: softprops/action-gh-release@v2
@@ -70,8 +64,6 @@ jobs:
           tag_name: ${{ steps.tag.outputs.release_tag }}
           name: "🚀 الإصدار ${{ steps.tag.outputs.release_tag }}"
           body: "تم بناء هذا الإصدار تلقائياً عبر GitHub Actions 🤖.\n\nتتضمن المرفقات نسخة `debug` للتجربة السريعة، ونسخة `release` للإصدار."
-          files: |
-            app/build/outputs/apk/debug/*.apk
-            app/build/outputs/apk/release/*.apk
+          files: app/build/outputs/apk/**/*.apk
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
