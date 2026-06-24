@@ -1,545 +1,65 @@
-# ═══════════════════════════════════════════════════════════════════════════
-#  🤖 منشئ APK الأوتوماتيكي لأندرويد
-#  يكتشف النوع ← يبني APKs ← ينتظر موافقتك ← ينشر Release
-# ═══════════════════════════════════════════════════════════════════════════
+name: 🤖 Android Build & Release
 
-name: 🤖 بناء تطبيق أندرويد
-
-# ── متى يعمل الـ Workflow ──────────────────────────────────────────────────
 on:
   push:
-    branches: [main, master]
+    branches: [ main, master ]
+  workflow_dispatch:
 
-  workflow_dispatch:            # ← تشغيل يدوي من تبويب Actions
-    inputs:
-
-      version_tag:
-        description: '🏷️ رقم الإصدار (مثال: v1.0.0) — اتركه فارغاً للتوليد التلقائي'
-        required: false
-        default: ''
-
-      build_type:
-        description: '🔨 ماذا تريد أن تبني؟'
-        required: true
-        default: 'الاثنان معاً'
-        type: choice
-        options:
-          - 'الاثنان معاً'
-          - 'Debug فقط'
-          - 'Release فقط'
-
-      sign_release:
-        description: '🔐 توقيع الـ Release APK؟ (يتطلب إعداد Secrets — راجع SETUP.md)'
-        required: true
-        default: true
-        type: boolean
-
-      create_release:
-        description: '🎉 إنشاء GitHub Release بعد البناء؟'
-        required: true
-        default: true
-        type: boolean
-
-# ── الأذونات المطلوبة لإنشاء Release ───────────────────────────────────────
 permissions:
   contents: write
 
-# ── متغيرات عامة ────────────────────────────────────────────────────────────
-env:
-  JAVA_VERSION: '21' # تم الترقية لـ 21 ليتوافق مع AGP 9.1.1
-  GRADLE_OPTS: >-
-    -Dorg.gradle.jvmargs=-Xmx4g
-    -Dorg.gradle.daemon=false
-    -Dkotlin.incremental=false
-
-# ════════════════════════════════════════════════════════════════════════════
 jobs:
-
-  # ══════════════════════════════════════════════════════════════════════════
-  #  المهمة 1 — اكتشاف نوع المشروع وبناء الـ APKs
-  # ══════════════════════════════════════════════════════════════════════════
   build:
-    name: 🏗️ اكتشاف وبناء APKs
+    name: 🏗️ Build APKs & Create Release
     runs-on: ubuntu-latest
 
-    # نتائج تُمرَّر للمهام التالية
-    outputs:
-      project_type:  ${{ steps.detect.outputs.project_type }}
-      release_tag:   ${{ steps.tag.outputs.release_tag }}
-      built_debug:   ${{ steps.organize.outputs.built_debug }}
-      built_release: ${{ steps.organize.outputs.built_release }}
-
     steps:
-
-      # ────────────────────────────────────────────────────────────────────
-      - name: 📥 سحب محتوى المستودع
+      - name: 📥 Checkout Repository
         uses: actions/checkout@v4
 
-      # ────────────────────────────────────────────────────────────────────
-      - name: 🔍 تحديد جذر المشروع وتوليد gradlew عند فقدانه
-        run: |
-          GRADLEW=$(find . -name "gradlew" \
-            ! -path "*/node_modules/*" \
-            ! -path "*/.git/*" | head -1)
-
-          if [ -n "$GRADLEW" ]; then
-            ROOT=$(dirname "$GRADLEW")
-            echo "PROJECT_ROOT=$ROOT" >> $GITHUB_ENV
-            echo "✅ جذر المشروع: $ROOT"
-          else
-            echo "⚠️ لم يُعثر على ملف gradlew. جاري توليد البيئة تلقائياً لتجنب توقف البناء..."
-            CONFIG_FILE=$(find . -name "settings.gradle.kts" -o -name "settings.gradle" -o -name "build.gradle.kts" -o -name "build.gradle" ! -path "*/node_modules/*" ! -path "*/.git/*" | head -1)
-            ROOT=$([ -n "$CONFIG_FILE" ] && dirname "$CONFIG_FILE" || echo ".")
-            echo "PROJECT_ROOT=$ROOT" >> $GITHUB_ENV
-            
-            cd "$ROOT"
-            GRADLE_VERSION="8.10"
-            PROP_FILE="gradle/wrapper/gradle-wrapper.properties"
-            
-            if [ -f "$PROP_FILE" ]; then
-              EXTRACTED_VERSION=$(grep "distributionUrl" "$PROP_FILE" | grep -oE '[0-9]+\.[0-9]+(\.[0-9]+)?' | head -1)
-              [ -n "$EXTRACTED_VERSION" ] && GRADLE_VERSION="$EXTRACTED_VERSION"
-            fi
-            
-            gradle wrapper --gradle-version "$GRADLE_VERSION" --distribution-type bin
-            echo "✅ تم توليد ملفات البيئة بنجاح واكتمل ترميم المشروع."
-          fi
-
-      # ────────────────────────────────────────────────────────────────────
-      - name: 🧠 اكتشاف نوع المشروع تلقائياً
-        id: detect
-        run: |
-          ROOT="$PROJECT_ROOT"
-          TYPE="unknown"
-          DISPLAY="غير معروف"
-
-          # ── Flutter ──────────────────────────────────────────
-          if [ -f "$ROOT/pubspec.yaml" ]; then
-            TYPE="flutter"
-            DISPLAY="Flutter 🐦"
-
-          # ── React Native ─────────────────────────────────────
-          elif [ -f "$ROOT/package.json" ] \
-            && grep -q '"react-native"' "$ROOT/package.json" 2>/dev/null; then
-            TYPE="react-native"
-            DISPLAY="React Native ⚛️"
-
-          # ── Ionic / Capacitor ────────────────────────────────
-          elif [ -f "$ROOT/package.json" ] \
-            && grep -qE '"@ionic|@capacitor"' "$ROOT/package.json" 2>/dev/null; then
-            TYPE="ionic"
-            DISPLAY="Ionic / Capacitor ⚡"
-
-          # ── مشاريع Gradle (أندرويد) ──────────────────────────
-          elif [ -f "$ROOT/build.gradle" ] || [ -f "$ROOT/build.gradle.kts" ]; then
-
-            if grep -rq "compose" "$ROOT" \
-                 --include="*.gradle" --include="*.kts" 2>/dev/null; then
-              TYPE="jetpack-compose"
-              DISPLAY="Jetpack Compose 🎨"
-
-            elif grep -rq "kotlin-multiplatform\|multiplatform" "$ROOT" \
-                   --include="*.gradle" --include="*.kts" 2>/dev/null; then
-              TYPE="kotlin-multiplatform"
-              DISPLAY="Kotlin Multiplatform 🌐"
-
-            else
-              TYPE="native-android"
-              DISPLAY="Native Android 🤖"
-            fi
-          fi
-
-          # ── نوع غير معروف — توقف مع رسالة واضحة ───────────
-          if [ "$TYPE" = "unknown" ]; then
-            echo "::error title=نوع مجهول::❌ لا يمكن التعرف على نوع المشروع."
-            echo ""
-            echo "الأنواع المدعومة:"
-            echo "  - Native Android (Java / Kotlin)"
-            echo "  - Jetpack Compose"
-            echo "  - Flutter"
-            echo "  - Kotlin Multiplatform"
-            echo "  - React Native"
-            echo "  - Ionic / Capacitor"
-            exit 1
-          fi
-
-          echo "project_type=$TYPE" >> $GITHUB_OUTPUT
-          echo "PROJECT_TYPE=$TYPE" >> $GITHUB_ENV
-          echo "PROJECT_DISPLAY=$DISPLAY" >> $GITHUB_ENV
-          echo "✅ النوع المكتشف: $DISPLAY"
-
-          # ── ملخص صفحة Actions ───────────────────────────────
-          {
-            echo "## 🧠 تحليل المشروع"
-            echo ""
-            echo "| البيان | القيمة |"
-            echo "| ------ | ------ |"
-            echo "| 🧬 نوع المشروع | \`$DISPLAY\` |"
-            echo "| 📂 مسار الجذر | \`$ROOT\` |"
-            echo "| 👤 شغّله | \`${{ github.actor }}\` |"
-            echo "| 🔗 الـ Commit | \`${{ github.sha }}\` |"
-            echo "| 🕐 وقت البدء | \`$(date -u '+%Y-%m-%d %H:%M UTC')\` |"
-          } >> $GITHUB_STEP_SUMMARY
-
-      # ────────────────────────────────────────────────────────────────────
-      - name: 🚩 تحديد خيارات البناء
-        run: |
-          BUILD_TYPE="${{ github.event.inputs.build_type || 'الاثنان معاً' }}"
-          case "$BUILD_TYPE" in
-            'Debug فقط')    BD=true;  BR=false ;;
-            'Release فقط')  BD=false; BR=true  ;;
-            *)               BD=true;  BR=true  ;;
-          esac
-          echo "BUILD_DEBUG=$BD"   >> $GITHUB_ENV
-          echo "BUILD_RELEASE=$BR" >> $GITHUB_ENV
-          echo "✅ بناء Debug=$BD | بناء Release=$BR"
-
-      # ────────────────────────────────────────────────────────────────────
-      - name: 🏷️ تحديد رقم الإصدار
-        id: tag
-        run: |
-          INPUT="${{ github.event.inputs.version_tag }}"
-          TAG="${INPUT:-v$(date +'%Y.%m.%d')-build${{ github.run_number }}}"
-          echo "release_tag=$TAG"  >> $GITHUB_OUTPUT
-          echo "RELEASE_TAG=$TAG"  >> $GITHUB_ENV
-          echo "✅ رقم الإصدار: $TAG"
-
-      # ────────────────────────────────────────────────────────────────────
-      - name: ☕ إعداد JDK ${{ env.JAVA_VERSION }}
+      - name: ☕ Set up JDK 21
         uses: actions/setup-java@v4
         with:
+          java-version: '21'
           distribution: 'temurin'
-          java-version: ${{ env.JAVA_VERSION }}
-          cache: 'gradle'
+          cache: gradle
 
-      # ────────────────────────────────────────────────────────────────────
-      - name: 🤖 تثبيت تراخيص Android SDK التجريبية تلقائياً
+      - name: 🔑 Grant execute permission for gradlew
+        run: chmod +x gradlew
+
+      - name: 📝 Setup environment
         run: |
-          mkdir -p ~/.android
-          touch ~/.android/repositories.cfg
-          yes | sdkmanager --licenses || true
-          echo "android.allowUntrustedChannel=true" >> "$PROJECT_ROOT/gradle.properties"
-          echo "✅ تم قبول التراخيص لدعم SDK 36"
-
-      # ─── Node.js — React Native / Ionic ──────────────────────────────────
-      - name: 🟢 إعداد Node.js (للمشاريع المعتمدة عليه)
-        if: env.PROJECT_TYPE == 'react-native' || env.PROJECT_TYPE == 'ionic'
-        uses: actions/setup-node@v4
-        with:
-          node-version: '20'
-
-      - name: 📦 تثبيت تبعيات Node
-        if: env.PROJECT_TYPE == 'react-native' || env.PROJECT_TYPE == 'ionic'
-        run: |
-          cd "$PROJECT_ROOT"
-          if   [ -f "yarn.lock" ];         then npm i -g yarn && yarn install --frozen-lockfile
-          elif [ -f "package-lock.json" ]; then npm ci
-          else                                  npm install
-          fi
-          echo "✅ تم تثبيت تبعيات Node"
-
-      # ─── Flutter ─────────────────────────────────────────────────────────
-      - name: 🐦 إعداد Flutter SDK
-        if: env.PROJECT_TYPE == 'flutter'
-        uses: subosito/flutter-action@v2
-        with:
-          channel: 'stable'
-          cache: true
-
-      - name: 📦 تثبيت تبعيات Flutter
-        if: env.PROJECT_TYPE == 'flutter'
-        run: |
-          flutter pub get --directory="$PROJECT_ROOT"
-          echo "✅ تم تثبيت تبعيات Flutter"
-
-      # ────────────────────────────────────────────────────────────────────
-      - name: 🔑 منح صلاحية التشغيل لـ gradlew
-        run: |
-          chmod +x "$PROJECT_ROOT/gradlew"
-          echo "✅ تم منح صلاحية التشغيل"
-
-      # ────────────────────────────────────────────────────────────────────
-      - name: 📝 إعداد ملفات البيئة المفقودة (.env و debug.keystore)
-        if: env.PROJECT_TYPE != 'flutter'
-        run: |
-          cd "$PROJECT_ROOT"
-          
-          # استنساخ .env لدعم Gemini AI
-          if [ -f ".env.example" ]; then
-            cp .env.example .env
-            echo "✅ تم نسخ .env.example إلى .env"
-          elif [ ! -f ".env" ]; then
+          # إنشاء ملف .env لتجنب أخطاء البناء إذا كان مفقوداً
+          if [ ! -f ".env" ]; then
             touch .env
           fi
 
-          # توليد debug.keystore برمجياً ليعمل مع إعداداتك
-          if [ ! -f "debug.keystore" ]; then
-            keytool -genkey -v -keystore debug.keystore -storepass android -alias androiddebugkey -keypass android -keyalg RSA -keysize 2048 -validity 10000 -dname "CN=Android Debug,O=Android,C=US"
-            echo "✅ تم إنشاء debug.keystore تلقائياً"
-          fi
+      - name: 🔨 Build Debug APK
+        run: ./gradlew assembleDebug --stacktrace
 
-      # ────────────────────────────────────────────────────────────────────
-      - name: 🔐 فك تشفير مفتاح التوقيع (Keystore)
-        if: env.BUILD_RELEASE == 'true'
-        run: |
-          if [ -n "${{ secrets.KEYSTORE_BASE64 }}" ]; then
-            echo "${{ secrets.KEYSTORE_BASE64 }}" | base64 --decode > /tmp/release.keystore
-            echo "KEYSTORE_PATH=/tmp/release.keystore" >> $GITHUB_ENV
-            echo "HAS_KEYSTORE=true"  >> $GITHUB_ENV
-            echo "✅ تم فك تشفير مفتاح التوقيع بنجاح"
-          else
-            echo "::warning::⚠️ لم يُعثر على KEYSTORE_BASE64 — سيُبنى Release بدون توقيع"
-            echo "HAS_KEYSTORE=false" >> $GITHUB_ENV
-            {
-              echo ""
-              echo "> ⚠️ **تحذير:** الـ Release APK **بدون توقيع** — راجع SETUP.md لإضافة مفتاح التوقيع."
-            } >> $GITHUB_STEP_SUMMARY
-          fi
+      - name: 🚀 Build Release APK
+        run: ./gradlew assembleRelease --stacktrace
 
-      # ══════════════════════════════════════════════════════════════════════
-      #  بناء Flutter
-      # ══════════════════════════════════════════════════════════════════════
+      - name: 🏷️ Generate Release Tag
+        id: tag
+        run: echo "release_tag=v$(date +'%Y.%m.%d-%H%M%S')" >> $GITHUB_OUTPUT
 
-      - name: 🔨 [Flutter] بناء Debug APK
-        if: env.BUILD_DEBUG == 'true' && env.PROJECT_TYPE == 'flutter'
-        run: |
-          cd "$PROJECT_ROOT"
-          flutter build apk --debug --no-pub
-          APK="$PROJECT_ROOT/build/app/outputs/flutter-apk/app-debug.apk"
-          [ ! -f "$APK" ] && APK=$(find "$PROJECT_ROOT/build" -name "*debug*.apk" | head -1)
-          echo "DEBUG_APK_SRC=$APK" >> $GITHUB_ENV
-          echo "✅ تم بناء Debug APK بنجاح"
-
-      - name: 🔐 [Flutter] إعداد ملف key.properties للتوقيع
-        if: env.BUILD_RELEASE == 'true' && env.PROJECT_TYPE == 'flutter' && env.HAS_KEYSTORE == 'true' && github.event.inputs.sign_release != 'false'
-        run: |
-          mkdir -p "$PROJECT_ROOT/android"
-          {
-            echo "storePassword=${{ secrets.KEYSTORE_PASSWORD }}"
-            echo "keyPassword=${{ secrets.KEY_PASSWORD }}"
-            echo "keyAlias=${{ secrets.KEY_ALIAS }}"
-            echo "storeFile=/tmp/release.keystore"
-          } > "$PROJECT_ROOT/android/key.properties"
-          echo "✅ تم كتابة key.properties"
-
-      - name: 🚀 [Flutter] بناء Release APK
-        if: env.BUILD_RELEASE == 'true' && env.PROJECT_TYPE == 'flutter'
-        run: |
-          cd "$PROJECT_ROOT"
-          flutter build apk --release --no-pub
-          APK="$PROJECT_ROOT/build/app/outputs/flutter-apk/app-release.apk"
-          [ ! -f "$APK" ] && APK=$(find "$PROJECT_ROOT/build" -name "*release*.apk" ! -path "*/test*" | head -1)
-          echo "RELEASE_APK_SRC=$APK" >> $GITHUB_ENV
-          echo "✅ تم بناء Release APK بنجاح"
-
-      # ══════════════════════════════════════════════════════════════════════
-      #  بناء Gradle — Native / Compose / React Native / Ionic / KMP
-      # ══════════════════════════════════════════════════════════════════════
-
-      - name: 🔨 [Gradle] بناء Debug APK
-        if: env.BUILD_DEBUG == 'true' && env.PROJECT_TYPE != 'flutter'
-        run: |
-          cd "$PROJECT_ROOT"
-          echo "▶ تشغيل: ./gradlew assembleDebug"
-          ./gradlew assembleDebug --no-daemon --stacktrace --no-configuration-cache
-          echo "✅ انتهى بناء Debug"
-
-      - name: 🔍 [Gradle] تحديد موقع Debug APK
-        if: env.BUILD_DEBUG == 'true' && env.PROJECT_TYPE != 'flutter'
-        run: |
-          APK=$(find "$PROJECT_ROOT" -name "*.apk" -path "*/debug/*" \
-                  ! -name "*test*" ! -path "*/test*" 2>/dev/null | head -1)
-          [ -z "$APK" ] && \
-          APK=$(find "$PROJECT_ROOT" -name "*debug*.apk" \
-                  ! -path "*/test*" 2>/dev/null | head -1)
-
-          if [ -z "$APK" ]; then
-            echo "::error::❌ لم يُعثر على Debug APK بعد البناء. راجع الـ Logs أعلاه."
-            exit 1
-          fi
-          echo "DEBUG_APK_SRC=$APK" >> $GITHUB_ENV
-          echo "✅ موقع Debug APK: $APK"
-
-      - name: 🚀 [Gradle] بناء Release APK — موقّع
-        if: env.BUILD_RELEASE == 'true' && env.PROJECT_TYPE != 'flutter' && env.HAS_KEYSTORE == 'true' && github.event.inputs.sign_release != 'false'
-        env:
-          KEYSTORE_PATH: ${{ env.KEYSTORE_PATH }}
-        run: |
-          cd "$PROJECT_ROOT"
-          echo "▶ بناء Release APK مع التوقيع الرسمي"
-          
-          ALIAS="${{ secrets.KEY_ALIAS }}"
-          [ -z "$ALIAS" ] && ALIAS="upload"
-          
-          ./gradlew assembleRelease --no-daemon --stacktrace --no-configuration-cache \
-            -Pandroid.injected.signing.store.file="$KEYSTORE_PATH" \
-            -Pandroid.injected.signing.store.password="${{ secrets.KEYSTORE_PASSWORD }}" \
-            -Pandroid.injected.signing.key.alias="$ALIAS" \
-            -Pandroid.injected.signing.key.password="${{ secrets.KEY_PASSWORD }}"
-          echo "✅ انتهى بناء Release (موقّع)"
-
-      - name: 🚀 [Gradle] بناء Release APK — بدون توقيع
-        if: env.BUILD_RELEASE == 'true' && env.PROJECT_TYPE != 'flutter' && (env.HAS_KEYSTORE == 'false' || github.event.inputs.sign_release == 'false')
-        run: |
-          cd "$PROJECT_ROOT"
-          echo "▶ بناء Release APK بدون توقيع"
-          ./gradlew assembleRelease --no-daemon --stacktrace --no-configuration-cache
-          echo "✅ انتهى بناء Release (بدون توقيع)"
-
-      - name: 🔍 [Gradle] تحديد موقع Release APK
-        if: env.BUILD_RELEASE == 'true' && env.PROJECT_TYPE != 'flutter'
-        run: |
-          APK=$(find "$PROJECT_ROOT" -name "*.apk" -path "*/release/*" \
-                  ! -name "*test*" ! -path "*/test*" 2>/dev/null | head -1)
-          [ -z "$APK" ] && \
-          APK=$(find "$PROJECT_ROOT" -name "*release*.apk" \
-                  ! -path "*/test*" 2>/dev/null | head -1)
-
-          if [ -z "$APK" ]; then
-            echo "::error::❌ لم يُعثر على Release APK بعد البناء. راجع الـ Logs أعلاه."
-            exit 1
-          fi
-          echo "RELEASE_APK_SRC=$APK" >> $GITHUB_ENV
-          echo "✅ موقع Release APK: $APK"
-
-      # ────────────────────────────────────────────────────────────────────
-      - name: 📁 تنظيم الـ APKs وإعادة تسميتها
-        id: organize
-        run: |
-          mkdir -p /tmp/apks
-          BD=false; BR=false
-
-          if [ -n "$DEBUG_APK_SRC" ] && [ -f "$DEBUG_APK_SRC" ]; then
-            DEST="/tmp/apks/debug-${RELEASE_TAG}.apk"
-            cp "$DEBUG_APK_SRC" "$DEST"
-            echo "DEBUG_APK=$DEST"                         >> $GITHUB_ENV
-            echo "DEBUG_SIZE=$(du -sh "$DEST" | cut -f1)"  >> $GITHUB_ENV
-            BD=true
-          fi
-
-          if [ -n "$RELEASE_APK_SRC" ] && [ -f "$RELEASE_APK_SRC" ]; then
-            DEST="/tmp/apks/release-${RELEASE_TAG}.apk"
-            cp "$RELEASE_APK_SRC" "$DEST"
-            echo "RELEASE_APK=$DEST"                         >> $GITHUB_ENV
-            echo "RELEASE_SIZE=$(du -sh "$DEST" | cut -f1)"  >> $GITHUB_ENV
-            BR=true
-          fi
-
-          echo "built_debug=$BD"   >> $GITHUB_OUTPUT
-          echo "built_release=$BR" >> $GITHUB_OUTPUT
-          echo ""
-          echo "📦 الملفات الجاهزة:"
-          ls -lh /tmp/apks/ || echo "(لا توجد ملفات)"
-
-      # ────────────────────────────────────────────────────────────────────
-      - name: 📤 رفع Debug APK كـ Artifact
-        if: env.DEBUG_APK != ''
+      - name: 📤 Upload Artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: debug-apk-${{ env.RELEASE_TAG }}
-          path: ${{ env.DEBUG_APK }}
-          retention-days: 30
+          name: apks-${{ steps.tag.outputs.release_tag }}
+          path: |
+            app/build/outputs/apk/debug/*.apk
+            app/build/outputs/apk/release/*.apk
 
-      - name: 📤 رفع Release APK كـ Artifact
-        if: env.RELEASE_APK != ''
-        uses: actions/upload-artifact@v4
-        with:
-          name: release-apk-${{ env.RELEASE_TAG }}
-          path: ${{ env.RELEASE_APK }}
-          retention-days: 30
-
-      # ────────────────────────────────────────────────────────────────────
-      - name: 📊 كتابة ملخص البناء النهائي
-        if: always()
-        run: |
-          {
-            echo ""
-            echo "## 📦 نتائج البناء"
-            echo ""
-            echo "| الملف | الحجم | الحالة |"
-            echo "| ----- | ----- | ------ |"
-
-            if [ "$BUILD_DEBUG" = "true" ]; then
-              if [ -n "$DEBUG_APK" ]; then
-                echo "| 🔨 Debug APK   | $DEBUG_SIZE   | ✅ جاهز للتحميل |"
-              else
-                echo "| 🔨 Debug APK   | — | ❌ فشل البناء |"
-              fi
-            fi
-
-            if [ "$BUILD_RELEASE" = "true" ]; then
-              if [ -n "$RELEASE_APK" ]; then
-                SIGN_STATUS="بدون توقيع ⚠️"
-                [ "$HAS_KEYSTORE" = "true" ] && SIGN_STATUS="موقّع رسمياً ✍️"
-                echo "| 🚀 Release APK | $RELEASE_SIZE | ✅ جاهز — $SIGN_STATUS |"
-              else
-                echo "| 🚀 Release APK | — | ❌ فشل البناء |"
-              fi
-            fi
-
-            echo ""
-            echo "**الإصدار:** \`$RELEASE_TAG\`  ·  **النوع:** \`$PROJECT_DISPLAY\`  ·  **البناء رقم:** \`#${{ github.run_number }}\`"
-            echo ""
-            echo "> 💡 يمكنك تحميل الـ APKs من قسم **Artifacts** في أسفل هذه الصفحة ↓"
-          } >> $GITHUB_STEP_SUMMARY
-
-
-  # ══════════════════════════════════════════════════════════════════════════
-  #  المهمة 2 — إنشاء GitHub Release الرسمي
-  # ══════════════════════════════════════════════════════════════════════════
-  create-release:
-    name: 🎉 نشر الإصدار على GitHub
-    needs: [build]
-    if: needs.build.result == 'success' && github.event.inputs.create_release != 'false'
-    runs-on: ubuntu-latest
-
-    steps:
-      - name: 📥 تحميل جميع الـ APKs من الـ Artifacts
-        uses: actions/download-artifact@v4
-        with:
-          pattern: '*-apk-${{ needs.build.outputs.release_tag }}'
-          path: /tmp/release-files/
-          merge-multiple: true
-
-      - name: 📋 عرض الملفات المراد نشرها
-        run: |
-          echo "الملفات التي ستُرفق مع الـ Release:"
-          ls -lh /tmp/release-files/ || echo "❌ لا توجد ملفات — تحقق من خطوة رفع الـ Artifacts"
-
-      - name: 🎉 إنشاء GitHub Release
+      - name: 🎉 Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: ${{ needs.build.outputs.release_tag }}
-          name: "🚀 إصدار ${{ needs.build.outputs.release_tag }}"
-          body: |
-            ## 🤖 بناء أوتوماتيكي — `${{ needs.build.outputs.release_tag }}`
-
-            | البيان | القيمة |
-            | ------ | ------ |
-            | 🧬 نوع المشروع   | `${{ needs.build.outputs.project_type }}` |
-            | 🏷️ رقم الإصدار   | `${{ needs.build.outputs.release_tag }}` |
-            | 🔢 رقم البناء    | `#${{ github.run_number }}` |
-            | 👤 شغّله         | `${{ github.actor }}` |
-            | 🔗 رمز الـ Commit | `${{ github.sha }}` |
-
-            ---
-
-            ### 📦 تحميل الـ APKs ↓
-            - 🔨 **debug-\*.apk** — للاختبار والتجربة على الجهاز
-            - 🚀 **release-\*.apk** — الإصدار الرسمي (موقّع إذا كانت الـ Secrets مضافة)
-          files: /tmp/release-files/*
-          draft: false
-          prerelease: false
+          tag_name: ${{ steps.tag.outputs.release_tag }}
+          name: "🚀 الإصدار ${{ steps.tag.outputs.release_tag }}"
+          body: "تم بناء هذا الإصدار تلقائياً عبر GitHub Actions 🤖."
+          files: |
+            app/build/outputs/apk/debug/*.apk
+            app/build/outputs/apk/release/*.apk
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: 📊 ملخص الإصدار النهائي
-        run: |
-          {
-            echo ""
-            echo "## 🎉 تم نشر الإصدار بنجاح!"
-            echo ""
-            echo "**الإصدار:** \`${{ needs.build.outputs.release_tag }}\`"
-            echo ""
-            echo "🔗 [اضغط هنا لعرض الإصدار على GitHub](https://github.com/${{ github.repository }}/releases/tag/${{ needs.build.outputs.release_tag }})"
-          } >> $GITHUB_STEP_SUMMARY
