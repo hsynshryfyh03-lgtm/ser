@@ -27,11 +27,16 @@ jobs:
       - name: 🔑 Grant execute permission for gradlew
         run: chmod +x gradlew
 
-      - name: 📝 Setup environment
+      - name: 📝 Setup environment files (.env & debug.keystore)
         run: |
           # إنشاء ملف .env لتجنب أخطاء البناء إذا كان مفقوداً
           if [ ! -f ".env" ]; then
             touch .env
+          fi
+          
+          # إنشاء debug.keystore للتوقيع لتجنب فشل البناء على GitHub
+          if [ ! -f "debug.keystore" ]; then
+            keytool -genkey -v -keystore debug.keystore -storepass android -alias androiddebugkey -keypass android -keyalg RSA -keysize 2048 -validity 10000 -dname "CN=Android Debug,O=Android,C=US"
           fi
 
       - name: 🔨 Build Debug APK
